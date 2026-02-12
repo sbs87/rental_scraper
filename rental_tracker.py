@@ -12,6 +12,8 @@ from datetime import datetime
 from urllib.parse import urlencode, urlparse, parse_qs
 import re
 import time
+import argparse
+import sys
 
 class RentalTracker:
     def __init__(self, base_url, output_dir='rental_data'):
@@ -289,8 +291,33 @@ class RentalTracker:
 
 def main():
     # Your search URL
-    url = "https://callfreda.com/rentalresults.php?vr=view&checkin=08/22/2026&checkout=08/29/2026&BD=5&MBD=7&BTH=3&MBTH=3&TW=Beach%20Block&MN=0&MX=999000&Amenities=Air%20Conditioning,Outside%20Shower,Washer,Dryer"
-    
+    parser = argparse.ArgumentParser(description="Rental Tracker of SIC rentals")
+    parser.add_argument('-u', '--url', required=False, help='Search URL to scrape (https://callfreda.com/...)')
+    parser.add_argument('-p', '--path', required=False, help='file path to read URL from (overrides --url)')
+    args = parser.parse_args()
+    url = args.url
+    url_path = args.path
+    print(url_path)
+    if url_path:
+        print(f"Reading URL from file: {url_path}")
+        try:
+            with open(args.path, 'r', encoding='utf-8') as f:
+                url = f.read().strip()
+                print(f"URL read from file: {url}")
+            if not url:
+                print(f"Error: URL file '{args.path}' is empty")
+        except Exception as e:
+            print(f"Error reading URL file '{args.path}': {e}")
+            sys.exit(1)
+    else:
+        if not url:
+            print("Error: No URL provided. Use --url or --path to specify the search URL.")
+            sys.exit(1)
+        else:
+            print(f"Using URL from command line: {url}")
+    #url = "https://callfreda.com/rentalresults.php?vr=view&checkin=08/15/2026&checkout=08/22/2026&BD=5&MBD=7&BTH=3&MBTH=3&TW=Beach%20Block&MN=0&MX=999000&Amenities=Air%20Conditioning,Outside%20Shower,Washer,Dryer#"
+    #url = "https://callfreda.com/rentalresults.php?vr=view&checkin=08/22/2026&checkout=08/29/2026&BD=5&MBD=7&BTH=3&MBTH=3&TW=Beach%20Block&MN=0&MX=999000&Amenities=Air%20Conditioning,Outside%20Shower,Washer,Dryer"
+    print(f"Starting rental tracker with URL: {url}")
     tracker = RentalTracker(url)
     tracker.run()
 
