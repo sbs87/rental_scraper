@@ -15,11 +15,13 @@ import time
 import argparse
 import sys
 
+global_timestamp = datetime.now().strftime('%Y-%m-%d_%H-%M-%S')
+
 class RentalTracker:
     def __init__(self, base_url, output_dir='rental_data'):
         self.base_url = base_url
         self.output_dir = output_dir
-        self.timestamp = datetime.now().strftime('%Y-%m-%d_%H-%M-%S')
+        self.timestamp = global_timestamp #datetime.now().strftime('%Y-%m-%d_%H-%M-%S')
         self.date_only = datetime.now().strftime('%Y-%m-%d')
         
         # Create output directory if it doesn't exist
@@ -95,6 +97,7 @@ class RentalTracker:
                 property_type = type_match.group(1) if type_match else 'Unknown'
                 
                 rental_data = {
+                    'timestamp': global_timestamp,
                     'property_id': property_id,
                     'address': address.strip(),
                     'unit': unit,
@@ -122,7 +125,7 @@ class RentalTracker:
             print("No rentals to save")
             return
         
-        fieldnames = ['property_id', 'address', 'unit', 'price', 'bedrooms', 
+        fieldnames = ['timestamp','property_id', 'address', 'unit', 'price', 'bedrooms', 
                      'bathrooms', 'half_baths', 'property_type', 'url', 
                      'scraped_date', 'scraped_timestamp']
         
@@ -138,7 +141,7 @@ class RentalTracker:
         if not rentals:
             return
         
-        fieldnames = ['property_id', 'address', 'unit', 'price', 'bedrooms', 
+        fieldnames = ['timestamp','property_id', 'address', 'unit', 'price', 'bedrooms', 
                      'bathrooms', 'half_baths', 'property_type', 'url', 
                      'scraped_date', 'scraped_timestamp']
         
