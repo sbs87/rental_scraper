@@ -305,7 +305,20 @@ def main():
         print(f"Reading URL from file: {url_path}")
         try:
             with open(args.path, 'r', encoding='utf-8') as f:
-                url = f.read().strip()
+                lines = [line.strip() for line in f.readlines() if line.strip()]
+                if not lines:
+                    url = ''
+                elif len(lines) == 1:
+                    url = lines[0]
+                else:
+                    urls = lines
+                    print(f"Found {len(urls)} URLs in file. Running tracker for each.")
+                    for u in urls:
+                        print(f"\n---\nProcessing URL: {u}")
+                        tracker = RentalTracker(u)
+                        tracker.run()
+                        time.sleep(1)
+                    sys.exit(0)
                 print(f"URL read from file: {url}")
             if not url:
                 print(f"Error: URL file '{args.path}' is empty")
