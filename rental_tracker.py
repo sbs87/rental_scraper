@@ -12,11 +12,16 @@ import os
 from datetime import datetime
 import re
 import time
+import argparse
 
+argparse = argparse.ArgumentParser(description="Multi-URL Rental Property Tracker for Freda Real Estate")
+argparse.add_argument('--config', type=str, default='search_urls.csv', help='Path to search URLs config file (default: search_urls.csv)')
+config_args = argparse.parse_args()
+search_urls_file = config_args.config
 global_timestamp = datetime.now().strftime('%Y-%m-%d_%H-%M-%S')
 
 class MultiRentalTracker:
-    def __init__(self, config_file='search_urls.csv', output_dir='rental_data'):
+    def __init__(self, config_file=search_urls_file, output_dir='rental_data'):
         self.config_file = config_file
         self.output_dir = output_dir
         self.timestamp = datetime.now().strftime('%Y-%m-%d_%H-%M-%S')
