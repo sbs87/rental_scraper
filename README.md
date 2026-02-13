@@ -1,22 +1,61 @@
-# Sea Isle City Rental Tracker
+# Multi-URL Sea Isle City Rental Tracker
 
-A Python-based web scraper that monitors beach block rental properties on Freda Real Estate (callfreda.com), tracking availability, prices, and property details over time.
+A Python-based web scraper that monitors multiple rental search criteria on Freda Real Estate (callfreda.com), tracking availability, prices, and property details over time across different date ranges and search parameters.
 
 ## 🎯 Purpose
 
 This tracker helps you:
-- Monitor rental availability for specific search criteria
-- Track price changes over time
+- Monitor **multiple searches simultaneously** (different weeks, criteria, etc.)
+- Track rental availability and price changes for each search
 - Identify which properties get rented/sold
-- Analyze patterns in successful rentals (price, bedrooms, etc.)
+- Compare availability across different date ranges
+- Analyze patterns in successful rentals
 
-## 📋 Features
+## ✨ Key Features
 
-- **Daily Scraping**: Captures current listings with all details
-- **Historical Tracking**: Maintains complete history in CSV format
-- **Change Detection**: Identifies new, removed, and price-changed listings
-- **Analysis Tools**: Generates insights about sold properties and trends
-- **CSV Storage**: Easy to analyze in Excel, Google Sheets, or Python
+- **Multi-URL Tracking**: Monitor unlimited search configurations in parallel
+- **Automatic Pagination**: Automatically fetches all pages of results (15, 30, 45+ properties)
+- **URL_ID Grouping**: Each search has a unique identifier for easy filtering
+- **Separate Analysis**: Compare results across different date ranges or criteria
+- **Historical Tracking**: Maintains complete history for each search
+- **Change Detection**: Identifies new, removed, and price-changed listings per search
+- **CSV Storage**: Easy to analyze in Excel, filter by URL_ID, or query programmatically
+
+## 📋 How It Works
+
+### 1. Configuration File (`search_urls.csv`)
+
+Define multiple searches in a simple CSV file:
+
+```csv
+url_id,url,description
+URL_ID_1,https://callfreda.com/rentalresults.php?...,Beach Block 5-7bd Aug 22-29
+URL_ID_2,https://callfreda.com/rentalresults.php?...,Beach Block 5-7bd Aug 15-22
+URL_ID_3,https://callfreda.com/rentalresults.php?...,Beach Block 5-7bd Aug 29-Sep 5
+```
+
+**Fields:**
+- `url_id`: Unique identifier (e.g., URL_ID_1, WEEK1_SEARCH, etc.)
+- `url`: Full search results URL from the website (base URL without `&start=` parameter)
+- `description`: Human-readable description
+
+**Note on Pagination:** Just provide the base URL! The tracker automatically handles pagination if your search has more than 15 results. See `PAGINATION.md` for details.
+
+### 2. Output Format
+
+All CSV files include `url_id` as the first column, allowing you to:
+- Filter data in Excel by URL_ID
+- Track specific searches independently
+- Compare across different date ranges
+
+**Example Output:**
+```csv
+url_id,property_id,address,price,bedrooms,bathrooms,...
+URL_ID_1,144437,28 63rd Street West,5500,5,3,...
+URL_ID_1,80842,25 68th St,4000,5,3,...
+URL_ID_2,144437,28 63rd Street West,5500,5,3,...
+URL_ID_3,98765,15 75th Street,4800,5,3,...
+```
 
 ## 🔧 Setup
 
@@ -31,7 +70,17 @@ This tracker helps you:
    pip install -r requirements.txt
    ```
 
-2. **Verify Setup**
+2. **Configure Your Searches**
+   
+   Edit `search_urls.csv` with your desired search URLs:
+   
+   a. Go to https://callfreda.com/vacationrentals.php
+   b. Enter your search criteria (dates, bedrooms, price, etc.)
+   c. Click "View Rentals"
+   d. Copy the full URL from your browser
+   e. Add a row to `search_urls.csv` with a unique URL_ID
+
+3. **Run First Scrape**
    ```bash
    python rental_tracker.py
    ```
@@ -45,70 +94,39 @@ Run the tracker manually:
 python rental_tracker.py
 ```
 
-This will:
-- Scrape the current listings
-- Save a timestamped snapshot
-- Update historical data
-- Compare with previous runs
-- Display changes in the terminal
-
-### Automated Daily Scraping
-
-#### Option 1: Cron (Linux/Mac)
-
-Add to your crontab to run daily at 9 AM:
-```bash
-crontab -e
+**Output shows results for each URL_ID:**
 ```
+======================================================================
+[1/3] Processing: URL_ID_1
+Description: Beach Block, 5-7bd, 3ba, Aug 22-29
+----------------------------------------------------------------------
+   ✓ Found 4 rental properties
 
-Add this line (adjust path to your script location):
-```
-0 9 * * * cd /path/to/rental-tracker && python rental_tracker.py >> rental_data/scraper.log 2>&1
-```
+   📋 CURRENT LISTINGS FOR URL_ID_1:
+      • 28 63rd Street West (West)
+        $5,500 | 5bd/3ba | Condo
+      ...
 
-#### Option 2: Task Scheduler (Windows)
-
-1. Open Task Scheduler
-2. Create Basic Task
-3. Set trigger: Daily at 9:00 AM
-4. Action: Start a program
-   - Program: `python`
-   - Arguments: `rental_tracker.py`
-   - Start in: `C:\path\to\rental-tracker`
-
-#### Option 3: Python Script (Cross-platform)
-
-Create a scheduled runner script:
-```python
-import schedule
-import time
-from rental_tracker import RentalTracker
-
-def run_tracker():
-    url = "https://callfreda.com/rentalresults.php?..."  # Your URL
-    tracker = RentalTracker(url)
-    tracker.run()
-
-# Run daily at 9 AM
-schedule.every().day.at("09:00").do(run_tracker)
-
-while True:
-    schedule.run_pending()
-    time.sleep(60)
+======================================================================
+[2/3] Processing: URL_ID_2
+Description: Beach Block, 5-7bd, 3ba, Aug 15-22
+----------------------------------------------------------------------
+   ✓ Found 3 rental properties
+   ...
 ```
 
 ### Running Analysis
 
-Generate insights from collected data:
+Analyze historical data with URL_ID grouping:
 ```bash
 python analyze_rentals.py
 ```
 
-This provides:
-- Statistics on sold/rented properties
-- Price change analysis
-- Availability trends over time
-- Average prices and property characteristics
+**Output includes:**
+- Comparison across all URL_IDs
+- Separate analysis for each search
+- Sold properties by URL_ID
+- Price trends by URL_ID
 
 ## 📁 Output Files
 
@@ -116,18 +134,18 @@ All files are stored in the `rental_data/` directory:
 
 ### 1. Snapshot Files
 - **Format**: `snapshot_YYYY-MM-DD_HH-MM-SS.csv`
-- **Contains**: Current listings at that specific time
-- **Use**: Point-in-time view of available rentals
+- **Contains**: All current listings across all URL_IDs
+- **URL_ID Column**: First column for easy filtering
 
 ### 2. Historical Data
 - **File**: `historical_data.csv`
-- **Contains**: All scraped data with timestamps
-- **Use**: Complete tracking history for analysis
+- **Contains**: All scraped data with timestamps and URL_IDs
+- **Usage**: Filter by URL_ID in Excel to see specific search history
 
 ### 3. Tracking Summary
 - **File**: `tracking_summary.csv`
-- **Contains**: High-level metrics for each scrape
-- **Use**: Quick overview of changes over time
+- **Contains**: Daily metrics for each URL_ID
+- **Usage**: Quick overview of listing counts per search
 
 ## 📊 Data Fields
 
@@ -135,7 +153,8 @@ Each rental listing includes:
 
 | Field | Description |
 |-------|-------------|
-| `property_id` | Unique identifier from website |
+| `url_id` | Search identifier (URL_ID_1, URL_ID_2, etc.) |
+| `property_id` | Unique property identifier from website |
 | `address` | Street address |
 | `unit` | Unit designation (East, West, etc.) |
 | `price` | Weekly rental price |
@@ -147,140 +166,183 @@ Each rental listing includes:
 | `scraped_date` | Date of scraping (YYYY-MM-DD) |
 | `scraped_timestamp` | Full timestamp |
 
-## 🔍 Understanding the Output
+## 💡 Use Cases
 
-### Terminal Output Example
-
-```
-📊 COMPARISON WITH 2026-02-11:
-   New listings: 1
-   Removed (sold/rented): 2
-   Still available: 2
-
-🏠 REMOVED LISTINGS (Likely Sold/Rented):
-   • 28 63rd Street West - $5,500 (5bd/3ba)
-   • 42 78th Street East - $4,900 (5bd/3ba)
-
-✨ NEW LISTINGS:
-   • 15 75th Street - $4,800 (5bd/3ba)
-
-💰 PRICE CHANGES:
-   • 22 78th Street: $5,000 → $4,750
+### Track Multiple Weeks
+Monitor availability for different vacation weeks:
+```csv
+url_id,url,description
+WEEK1,https://callfreda.com/...checkin=07/01/2026...,July 1-8
+WEEK2,https://callfreda.com/...checkin=07/08/2026...,July 8-15
+WEEK3,https://callfreda.com/...checkin=07/15/2026...,July 15-22
 ```
 
-### Analysis Insights
-
-The `analyze_rentals.py` script provides:
-
-**Sold Properties Analysis**
-- Average price of rented properties
-- Most common property types
-- Price ranges that rent fastest
-
-**Price Trends**
-- How often prices change
-- Average increase/decrease amounts
-- Properties with significant price drops
-
-**Availability Trends**
-- How inventory changes over time
-- Seasonal patterns (with enough data)
-
-## 🎯 Customizing Your Search
-
-To monitor different criteria, update the URL in `rental_tracker.py`:
-
-```python
-# Current URL searches for:
-# - Check-in: 08/22/2026
-# - Check-out: 08/29/2026
-# - Bedrooms: 5-7
-# - Bathrooms: 3
-# - Location: Beach Block
-# - Price: $0-$999,000
-# - Amenities: Air Conditioning, Outside Shower, Washer, Dryer
-
-# To change criteria:
-# 1. Go to https://callfreda.com/vacationrentals.php
-# 2. Select your desired criteria
-# 3. Click "View Rentals"
-# 4. Copy the full URL from the results page
-# 5. Replace the URL in the script
+### Compare Price Ranges
+Track same dates with different price limits:
+```csv
+url_id,url,description
+BUDGET,https://callfreda.com/...MX=5000...,Under $5k
+MIDRANGE,https://callfreda.com/...MX=7000...,Under $7k
+LUXURY,https://callfreda.com/...MX=999000...,All prices
 ```
 
-## 📈 Tips for Best Results
+### Monitor Different Locations
+Track different areas in Sea Isle:
+```csv
+url_id,url,description
+BEACH_BLOCK,https://callfreda.com/...TW=Beach%20Block...,Beach Block
+BEACHFRONT,https://callfreda.com/...TW=Beachfront...,Beachfront
+OCEANSIDE,https://callfreda.com/...TW=Oceanside...,Oceanside
+```
 
-1. **Run Daily**: More frequent data = better insights
-2. **Track Full Season**: Start tracking early (Jan-Feb for summer)
-3. **Monitor Price Drops**: Properties with reduced prices may indicate flexibility
-4. **Note Patterns**: Properties that rent quickly often share characteristics
-5. **Compare Weeks**: Different weeks have different availability/pricing
+## 🔍 Analyzing Your Data
 
-## 🔐 Data Privacy
+### In Excel/Google Sheets
 
-- All data scraped is publicly available on the website
-- No personal information or authentication required
-- Data stored locally on your machine
-- Not shared or transmitted anywhere
+1. Open `historical_data.csv`
+2. Filter by `url_id` column to see specific search
+3. Create pivot tables by URL_ID
+4. Chart trends over time per search
 
-## ⚠️ Important Notes
-
-- **Respectful Scraping**: Script includes delays and proper headers
-- **Website Changes**: If the site structure changes, parsing may break
-- **Legal**: Review the website's Terms of Service for scraping policies
-- **Rate Limiting**: Don't run more frequently than once per hour
-
-## 🐛 Troubleshooting
-
-### "No rentals found"
-- Check if the URL is still valid
-- Website structure may have changed
-- Run manually and check terminal output
-
-### "Error fetching page"
-- Check your internet connection
-- Website may be temporarily down
-- Try again in a few minutes
-
-### Empty CSV files
-- First run creates structure but needs data
-- Run at least twice to see comparisons
-
-## 📞 Search Criteria Info
-
-Your current search is for:
-- **Dates**: Aug 22-29, 2026 (1 week)
-- **Bedrooms**: 5-7
-- **Bathrooms**: 3
-- **Location**: Beach Block only
-- **Max Price**: $999,000
-- **Required Amenities**: Air Conditioning, Outside Shower, Washer, Dryer
-
-## 🎓 Next Steps
-
-After collecting a week of data:
-1. Run `python analyze_rentals.py` to see patterns
-2. Look for properties that rented quickly
-3. Note the price range that moves fastest
-4. Check if certain property types are more popular
-5. Use insights to inform your rental decisions
-
-## 📝 Example Analysis Workflow
+### Using the Analysis Script
 
 ```bash
-# Day 1: First run
-python rental_tracker.py
-# Output: 4 properties found, baseline established
-
-# Day 2: Second run
-python rental_tracker.py
-# Output: 3 properties (1 rented), identifies which one
-
-# Day 7: After a week
 python analyze_rentals.py
-# Output: Insights on rented properties
+```
+
+**Shows per URL_ID:**
+- How many properties available over time
+- Which properties were sold/rented
+- Price changes within each search
+- Average prices across searches
+
+### Example Analysis Output
+
+```
+📊 COMPARISON ACROSS ALL SEARCHES
+======================================================================
+Latest Data: 2026-02-12
+
+🔍 URL_ID_1:
+   Listings: 4
+   Price Range: $4,000 - $5,500
+   Average Price: $4,850
+
+🔍 URL_ID_2:
+   Listings: 3
+   Price Range: $3,800 - $5,200
+   Average Price: $4,333
+
+======================================================================
+🏠 SOLD/RENTED PROPERTIES ANALYSIS - URL_ID_1
+----------------------------------------------------------------------
+Total Sold/Rented: 2
+Average Price: $4,850
+```
+
+## 🔄 Automated Daily Scraping
+
+### Linux/Mac (Cron)
+
+```bash
+crontab -e
+```
+
+Add line (runs at 9 AM daily):
+```
+0 9 * * * cd /path/to/rental-tracker && python rental_tracker.py >> rental_data/scraper.log 2>&1
+```
+
+### Windows (Task Scheduler)
+
+1. Open Task Scheduler
+2. Create Basic Task
+3. Trigger: Daily at 9:00 AM
+4. Action: Start a program
+   - Program: `python`
+   - Arguments: `rental_tracker.py`
+   - Start in: Your folder path
+
+## 🎨 Customizing URL_IDs
+
+URL_IDs can be any unique string. Use descriptive names:
+
+**Good Examples:**
+- `JULY_WEEK1`, `JULY_WEEK2`, `JULY_WEEK3`
+- `BUDGET_SEARCH`, `LUXURY_SEARCH`
+- `5BD_SEARCH`, `6BD_SEARCH`, `7BD_SEARCH`
+- `BEACHBLOCK_AUG`, `BEACHFRONT_AUG`
+
+**Avoid:**
+- Duplicate URL_IDs across different searches
+- Very long IDs (keep under 20 characters for readability)
+- Special characters (stick to letters, numbers, underscores)
+
+## 📈 Sample Workflow
+
+### Week 1: Setup Multiple Searches
+```bash
+# Edit search_urls.csv with 3 different weeks
+python rental_tracker.py
+# Output: Baseline established for all 3 searches
+```
+
+### Week 2-4: Daily Tracking
+```bash
+# Run daily (or use cron/Task Scheduler)
+python rental_tracker.py
+# Output: Shows changes per URL_ID
+```
+
+### Week 5: Analysis
+```bash
+python analyze_rentals.py
+# Output: Comprehensive insights per search
+```
+
+## 🛠️ Troubleshooting
+
+### "Config file not found"
+The script will create a sample `search_urls.csv` automatically. Edit it with your URLs.
+
+### "No rentals found for URL_ID_X"
+- Check if the URL is correct
+- Verify the website is accessible
+- That search might genuinely have 0 results
+
+### Excel: Filter by URL_ID
+1. Open CSV in Excel
+2. Click on column A header (url_id)
+3. Use AutoFilter dropdown
+4. Select specific URL_ID(s)
+
+## 🎯 Pro Tips
+
+1. **Descriptive URL_IDs**: Use meaningful names like `AUG_WEEK1` instead of `URL_ID_1`
+2. **Track Early**: Start 6+ months before your target dates
+3. **Multiple Searches**: More searches = better comparison data
+4. **Regular Analysis**: Run `analyze_rentals.py` weekly to spot trends
+5. **Export by URL_ID**: In Excel, filter and save separate sheets per search
+
+## 📞 Example Configurations
+
+### Scenario 1: Finding the Best Week
+```csv
+url_id,url,description
+AUG_WK1,https://callfreda.com/...checkin=08/01/2026...,Aug 1-8
+AUG_WK2,https://callfreda.com/...checkin=08/08/2026...,Aug 8-15
+AUG_WK3,https://callfreda.com/...checkin=08/15/2026...,Aug 15-22
+AUG_WK4,https://callfreda.com/...checkin=08/22/2026...,Aug 22-29
+```
+
+### Scenario 2: Finding the Right Price Point
+```csv
+url_id,url,description
+UNDER_4K,https://callfreda.com/...MX=4000...,Budget under $4k
+MID_4K_6K,https://callfreda.com/...MN=4000&MX=6000...,Mid-range $4-6k
+OVER_6K,https://callfreda.com/...MN=6000...,Premium over $6k
 ```
 
 ---
 
-**Happy Tracking! 🏖️**
+**Track smarter, not harder! 🏖️**
