@@ -1,28 +1,29 @@
 #!/usr/bin/env python3
 """
-Rental Property Tracker for Freda Real Estate
-Monitors beach block rentals in Sea Isle City, NJ
+Multi-URL Rental Property Tracker for Freda Real Estate
+Monitors multiple search criteria with automatic pagination
 """
 
+from urllib.parse import parse_qs, urlparse
 import requests
 from bs4 import BeautifulSoup
 import csv
 import os
 from datetime import datetime
-from urllib.parse import urlencode, urlparse, parse_qs
 import re
 import time
-import argparse
-import sys
 
 global_timestamp = datetime.now().strftime('%Y-%m-%d_%H-%M-%S')
 
-class RentalTracker:
-    def __init__(self, base_url, output_dir='rental_data'):
-        self.base_url = base_url
+class MultiRentalTracker:
+    def __init__(self, config_file='search_urls.csv', output_dir='rental_data'):
+        self.config_file = config_file
         self.output_dir = output_dir
-        self.timestamp = global_timestamp #datetime.now().strftime('%Y-%m-%d_%H-%M-%S')
+        self.timestamp = datetime.now().strftime('%Y-%m-%d_%H-%M-%S')
         self.date_only = datetime.now().strftime('%Y-%m-%d')
+        
+        # Pagination settings
+        self.results_per_page = 15  # Freda shows 15 results per page
         
         # Create output directory if it doesn't exist
         os.makedirs(output_dir, exist_ok=True)
@@ -32,20 +33,95 @@ class RentalTracker:
         self.historical_file = os.path.join(output_dir, 'historical_data.csv')
         self.summary_file = os.path.join(output_dir, 'tracking_summary.csv')
         
-    def fetch_page(self):
+    def load_search_urls(self):
+        """Load search URLs from config file"""
+        if not os.path.isfile(self.config_file):
+            print(f"❌ Config file not found: {self.config_file}")
+            print("   Creating sample file...")
+            self.create_sample_config()
+            return []
+        
+        searches = []
+        with open(self.config_file, 'r', encoding='utf-8') as f:
+            reader = csv.DictReader(f,delimiter='\t')
+            for row in reader:
+                if row.get('url_id') and row.get('url'):
+                    searches.append({
+                        'url_id': row['url_id'].strip(),
+                        'url': row['url'].strip(),
+                        'description': row.get('description', '').strip()
+                    })
+        
+        return searches
+    
+    def create_sample_config(self):
+        """Create a sample configuration file"""
+        sample_data = [
+            {
+                'url_id': 'URL_ID_1',
+                'url': 'https://callfreda.com/rentalresults.php?vr=view&checkin=08/22/2026&checkout=08/29/2026&BD=5&MBD=7&BTH=3&MBTH=3&TW=Beach%20Block&MN=0&MX=999000&Amenities=Air%20Conditioning,Outside%20Shower,Washer,Dryer',
+                'description': 'Beach Block, 5-7bd, 3ba, Aug 22-29'
+            },
+            {
+                'url_id': 'URL_ID_2',
+                'url': 'https://callfreda.com/rentalresults.php?vr=view&checkin=08/15/2026&checkout=08/22/2026&BD=5&MBD=7&BTH=3&MBTH=3&TW=Beach%20Block&MN=0&MX=999000&Amenities=Air%20Conditioning,Outside%20Shower,Washer,Dryer',
+                'description': 'Beach Block, 5-7bd, 3ba, Aug 15-22'
+            }
+        ]
+        
+        with open(self.config_file, 'w', newline='', encoding='utf-8') as f:
+            writer = csv.DictWriter(f, fieldnames=['url_id', 'url', 'description'],delimiter='\t')
+            writer.writeheader()
+            writer.writerows(sample_data)
+        
+        print(f"✓ Created sample config: {self.config_file}")
+        print("  Edit this file to add your search URLs")
+    
+    def build_paginated_url(self, base_url, start_index):
+        """Build URL with pagination parameter"""
+        # Remove any existing &start= parameter
+        url = re.sub(r'&start=\d+', '', base_url)
+        
+        # Add the start parameter
+        if start_index > 0:
+            if '?' in url:
+                url = f"{url}&start={start_index}"
+            else:
+                url = f"{url}?start={start_index}"
+        
+        return url
+    
+    def fetch_page(self, url):
         """Fetch the rental results page"""
         try:
             headers = {
                 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
             }
-            response = requests.get(self.base_url, headers=headers, timeout=30)
+            response = requests.get(url, headers=headers, timeout=30)
             response.raise_for_status()
             return response.text
         except requests.RequestException as e:
-            print(f"Error fetching page: {e}")
+            print(f"   ❌ Error fetching page: {e}")
             return None
     
-    def parse_rentals(self, html):
+    def get_total_results(self, html):
+        """Extract total number of results from the page"""
+        soup = BeautifulSoup(html, 'html.parser')
+        
+        # Look for text like "You have X Rental Properties that Match Your Criteria"
+        text = soup.get_text()
+        match = re.search(r'You have\s+\*\*(\d+)\*\*\s+Rental Properties', text)
+        if match:
+            return int(match.group(1))
+        
+        # Alternative: look for "Displaying X - Y of Z"
+        match = re.search(r'Displaying\s+\*\*\d+\*\*\s+-\s+\*\*\d+\*\*\s+of\s+\*\*(\d+)\*\*', text)
+        if match:
+            return int(match.group(1))
+        
+        return None
+    
+    def parse_rentals(self, html, url_id):
         """Parse rental listings from HTML"""
         soup = BeautifulSoup(html, 'html.parser')
         rentals = []
@@ -59,6 +135,14 @@ class RentalTracker:
                 href = link.get('href', '')
                 id_match = re.search(r'id=(\d+)', href)
                 property_id = id_match.group(1) if id_match else 'unknown'
+
+                # SLOPPY condense into a single parser Try to extract checkin/checkout from the link; fall back to the search URL if absent
+                parsed = urlparse(href)
+                query = parsed.query or urlparse(self.base_url).query
+                params = parse_qs(query)
+                checkin_date = params.get('checkin', [''])[0]
+                checkout_date = params.get('checkout', [''])[0]
+                
                 
                 # Find the parent container with all property details
                 parent = link.find_parent('td')
@@ -97,8 +181,11 @@ class RentalTracker:
                 property_type = type_match.group(1) if type_match else 'Unknown'
                 
                 rental_data = {
-                    'timestamp': global_timestamp,
+                    'url_id': url_id,
                     'property_id': property_id,
+                    'timestamp': global_timestamp,
+                    'checkin_date': checkin_date,
+                    'checkout_date': checkout_date,
                     'address': address.strip(),
                     'unit': unit,
                     'price': price,
@@ -114,227 +201,330 @@ class RentalTracker:
                 rentals.append(rental_data)
                 
             except Exception as e:
-                print(f"Error parsing rental: {e}")
+                print(f"   ⚠️  Error parsing rental: {e}")
                 continue
         
         return rentals
     
-    def save_snapshot(self, rentals):
+    def fetch_all_pages(self, base_url, url_id):
+        """Fetch all pages of results for a given search URL"""
+        all_rentals = []
+        page_num = 1
+        start_index = 0
+        
+        print(f"   📄 Fetching page {page_num}...", end='', flush=True)
+        
+        # Fetch first page
+        url = self.build_paginated_url(base_url, start_index)
+        html = self.fetch_page(url)
+        
+        if not html:
+            print(" failed!")
+            return []
+        
+        # Get total results from first page
+        total_results = self.get_total_results(html)
+        if total_results:
+            print(f" found {total_results} total results")
+            expected_pages = (total_results + self.results_per_page - 1) // self.results_per_page
+            print(f"   📊 Expecting approximately {expected_pages} pages")
+        else:
+            print(" (total unknown, will paginate until empty)")
+        
+        # Parse first page
+        rentals = self.parse_rentals(html, url_id)
+        if rentals:
+            all_rentals.extend(rentals)
+            print(f"   ✓ Page {page_num}: {len(rentals)} properties")
+        else:
+            print(f"   ⚠️  Page {page_num}: No properties found")
+            return all_rentals
+        
+        # Continue fetching pages while we get results
+        while True:
+            # If we know the total and have reached it, stop
+            if total_results and len(all_rentals) >= total_results:
+                print(f"   ✓ Reached all {total_results} results")
+                break
+            
+            # If the last page had fewer than expected results, we're done
+            if len(rentals) < self.results_per_page:
+                print(f"   ✓ Last page had {len(rentals)} results (less than {self.results_per_page}), pagination complete")
+                break
+            
+            # Fetch next page
+            page_num += 1
+            start_index += self.results_per_page
+            
+            print(f"   📄 Fetching page {page_num}...", end='', flush=True)
+            
+            # Small delay to be respectful to the server
+            time.sleep(0.5)
+            
+            url = self.build_paginated_url(base_url, start_index)
+            html = self.fetch_page(url)
+            
+            if not html:
+                print(" failed! Stopping pagination.")
+                break
+            
+            rentals = self.parse_rentals(html, url_id)
+            
+            if not rentals:
+                print(f" no more results found")
+                break
+            
+            all_rentals.extend(rentals)
+            print(f" {len(rentals)} properties")
+        
+        # Remove duplicates based on property_id (in case of overlap)
+        seen_ids = set()
+        unique_rentals = []
+        for rental in all_rentals:
+            if rental['property_id'] not in seen_ids:
+                seen_ids.add(rental['property_id'])
+                unique_rentals.append(rental)
+        
+        if len(unique_rentals) != len(all_rentals):
+            duplicates_removed = len(all_rentals) - len(unique_rentals)
+            print(f"   ℹ️  Removed {duplicates_removed} duplicate(s)")
+        
+        return unique_rentals
+    
+    def save_snapshot(self, all_rentals):
         """Save current snapshot to CSV"""
-        if not rentals:
-            print("No rentals to save")
+        if not all_rentals:
+            print("   No rentals to save")
             return
         
-        fieldnames = ['timestamp','property_id', 'address', 'unit', 'price', 'bedrooms', 
+        fieldnames = ['url_id', 'property_id', 'timestamp', 'checkin_date', 'checkout_date', 'address', 'unit', 'price', 'bedrooms', 
                      'bathrooms', 'half_baths', 'property_type', 'url', 
                      'scraped_date', 'scraped_timestamp']
         
         with open(self.snapshot_file, 'w', newline='', encoding='utf-8') as f:
-            writer = csv.DictWriter(f, fieldnames=fieldnames)
+            writer = csv.DictWriter(f, fieldnames=fieldnames,delimiter='\t')
             writer.writeheader()
-            writer.writerows(rentals)
+            writer.writerows(all_rentals)
         
-        print(f"✓ Snapshot saved: {self.snapshot_file}")
+        print(f"   ✓ Snapshot saved: {self.snapshot_file}")
     
-    def update_historical(self, rentals):
+    def update_historical(self, all_rentals):
         """Append to historical data file"""
-        if not rentals:
+        if not all_rentals:
             return
         
-        fieldnames = ['timestamp','property_id', 'address', 'unit', 'price', 'bedrooms', 
+        fieldnames = ['url_id', 'property_id', 'timestamp', 'checkin_date', 'checkout_date', 'address', 'unit', 'price', 'bedrooms', 
                      'bathrooms', 'half_baths', 'property_type', 'url', 
                      'scraped_date', 'scraped_timestamp']
         
         file_exists = os.path.isfile(self.historical_file)
         
         with open(self.historical_file, 'a', newline='', encoding='utf-8') as f:
-            writer = csv.DictWriter(f, fieldnames=fieldnames)
+            writer = csv.DictWriter(f, fieldnames=fieldnames,delimiter='\t')
             if not file_exists:
                 writer.writeheader()
-            writer.writerows(rentals)
+            writer.writerows(all_rentals)
         
-        print(f"✓ Historical data updated: {self.historical_file}")
+        print(f"   ✓ Historical data updated: {self.historical_file}")
     
-    def analyze_changes(self, rentals):
-        """Compare with previous data to identify changes"""
+    def analyze_changes_by_url(self, rentals_by_url, searches):
+        """Compare with previous data to identify changes for each URL"""
         if not os.path.isfile(self.historical_file):
-            print("ℹ First run - no previous data to compare")
+            print("\nℹ️  First run - no previous data to compare")
             return
         
         # Read all historical data
         historical = []
         with open(self.historical_file, 'r', encoding='utf-8') as f:
-            reader = csv.DictReader(f)
+            reader = csv.DictReader(f,delimiter='\t')
             historical = list(reader)
         
         if not historical:
-            print("ℹ No previous data to compare")
+            print("\nℹ️  No previous data to compare")
             return
         
         # Get the most recent previous scrape date (not today's)
         dates = sorted(set(row['scraped_date'] for row in historical if row['scraped_date'] != self.date_only))
         if not dates:
-            print("ℹ No previous scrape to compare with")
+            print("\nℹ️  No previous scrape to compare with")
             return
         
         previous_date = dates[-1]
         
-        # Get previous listings
-        previous = [row for row in historical if row['scraped_date'] == previous_date]
-        previous_ids = set(row['property_id'] for row in previous)
+        print(f"\n{'='*70}")
+        print(f"📊 COMPARISON WITH {previous_date}")
+        print('='*70)
         
-        # Get current listings
-        current_ids = set(rental['property_id'] for rental in rentals)
-        
-        # Identify changes
-        new_listings = current_ids - previous_ids
-        removed_listings = previous_ids - current_ids
-        still_available = current_ids & previous_ids
-        
-        print(f"\n📊 COMPARISON WITH {previous_date}:")
-        print(f"   New listings: {len(new_listings)}")
-        print(f"   Removed (sold/rented): {len(removed_listings)}")
-        print(f"   Still available: {len(still_available)}")
-        
-        # Show details of removed listings
-        if removed_listings:
-            print(f"\n🏠 REMOVED LISTINGS (Likely Sold/Rented):")
-            for prop_id in removed_listings:
-                prop = next((p for p in previous if p['property_id'] == prop_id), None)
-                if prop:
-                    print(f"   • {prop['address']} - ${prop['price']} ({prop['bedrooms']}bd/{prop['bathrooms']}ba)")
-        
-        # Show new listings
-        if new_listings:
-            print(f"\n✨ NEW LISTINGS:")
-            for prop_id in new_listings:
-                prop = next((p for p in rentals if p['property_id'] == prop_id), None)
-                if prop:
-                    print(f"   • {prop['address']} - ${prop['price']} ({prop['bedrooms']}bd/{prop['bathrooms']}ba)")
-        
-        # Check for price changes
-        print(f"\n💰 PRICE CHANGES:")
-        price_changes = False
-        for current in rentals:
-            if current['property_id'] in still_available:
-                prev = next((p for p in previous if p['property_id'] == current['property_id']), None)
-                if prev and prev['price'] != current['price']:
-                    price_changes = True
-                    print(f"   • {current['address']}: ${prev['price']} → ${current['price']}")
-        
-        if not price_changes:
-            print("   No price changes detected")
+        # Analyze each URL separately
+        for search in searches:
+            url_id = search['url_id']
+            description = search['description']
+            
+            print(f"\n🔍 {url_id}: {description}")
+            print("-" * 70)
+            
+            # Get previous and current listings for this URL_ID
+            previous_for_url = [row for row in historical 
+                               if row['scraped_date'] == previous_date 
+                               and row['url_id'] == url_id]
+            current_for_url = rentals_by_url.get(url_id, [])
+            
+            if not previous_for_url and not current_for_url:
+                print("   ℹ️  No data for this search")
+                continue
+            
+            previous_ids = set(row['property_id'] for row in previous_for_url)
+            current_ids = set(rental['property_id'] for rental in current_for_url)
+            
+            # Identify changes
+            new_listings = current_ids - previous_ids
+            removed_listings = previous_ids - current_ids
+            still_available = current_ids & previous_ids
+            
+            print(f"   📈 Summary:")
+            print(f"      • Current listings: {len(current_for_url)}")
+            print(f"      • New: {len(new_listings)}")
+            print(f"      • Removed (sold/rented): {len(removed_listings)}")
+            print(f"      • Still available: {len(still_available)}")
+            
+            # Show details of removed listings
+            if removed_listings:
+                print(f"\n   🏠 REMOVED LISTINGS (Likely Sold/Rented):")
+                for prop_id in removed_listings:
+                    prop = next((p for p in previous_for_url if p['property_id'] == prop_id), None)
+                    if prop:
+                        print(f"      • {prop['address']} - ${prop['price']} "
+                              f"({prop['bedrooms']}bd/{prop['bathrooms']}ba)")
+            
+            # Show new listings
+            if new_listings:
+                print(f"\n   ✨ NEW LISTINGS:")
+                for prop_id in new_listings:
+                    prop = next((p for p in current_for_url if p['property_id'] == prop_id), None)
+                    if prop:
+                        print(f"      • {prop['address']} - ${prop['price']} "
+                              f"({prop['bedrooms']}bd/{prop['bathrooms']}ba)")
+            
+            # Check for price changes
+            price_changes = []
+            for current in current_for_url:
+                if current['property_id'] in still_available:
+                    prev = next((p for p in previous_for_url 
+                               if p['property_id'] == current['property_id']), None)
+                    if prev and prev['price'] != current['price']:
+                        price_changes.append({
+                            'address': current['address'],
+                            'old_price': prev['price'],
+                            'new_price': current['price']
+                        })
+            
+            if price_changes:
+                print(f"\n   💰 PRICE CHANGES:")
+                for change in price_changes:
+                    print(f"      • {change['address']}: ${change['old_price']} → ${change['new_price']}")
+            elif still_available:
+                print(f"\n   💰 No price changes detected")
         
         # Update summary file
-        self.update_summary(len(rentals), len(new_listings), len(removed_listings), len(still_available))
+        self.update_summary(rentals_by_url, searches)
     
-    def update_summary(self, total, new, removed, still_available):
-        """Update the tracking summary file"""
-        fieldnames = ['date', 'timestamp', 'total_listings', 'new_listings', 
-                     'removed_listings', 'still_available']
+    def update_summary(self, rentals_by_url, searches):
+        """Update the tracking summary file with per-URL stats"""
+        fieldnames = ['date', 'timestamp', 'url_id', 'total_listings']
         
         file_exists = os.path.isfile(self.summary_file)
         
         with open(self.summary_file, 'a', newline='', encoding='utf-8') as f:
-            writer = csv.DictWriter(f, fieldnames=fieldnames)
+            writer = csv.DictWriter(f, fieldnames=fieldnames,delimiter='\t')
             if not file_exists:
                 writer.writeheader()
             
-            writer.writerow({
-                'date': self.date_only,
-                'timestamp': self.timestamp,
-                'total_listings': total,
-                'new_listings': new,
-                'removed_listings': removed,
-                'still_available': still_available
-            })
+            for search in searches:
+                url_id = search['url_id']
+                rentals = rentals_by_url.get(url_id, [])
+                
+                writer.writerow({
+                    'date': self.date_only,
+                    'timestamp': self.timestamp,
+                    'url_id': url_id,
+                    'total_listings': len(rentals)
+                })
         
-        print(f"✓ Summary updated: {self.summary_file}")
+        print(f"\n   ✓ Summary updated: {self.summary_file}")
     
     def run(self):
         """Main execution method"""
-        print("=" * 60)
-        print("🏖️  RENTAL TRACKER - Sea Isle City Beach Block")
-        print("=" * 60)
-        print(f"Scraping at: {self.timestamp}")
-        print(f"URL: {self.base_url}\n")
+        print("=" * 70)
+        print("🏖️  MULTI-URL RENTAL TRACKER - Sea Isle City")
+        print("=" * 70)
+        print(f"Scraping at: {self.timestamp}\n")
         
-        # Fetch and parse
-        html = self.fetch_page()
-        if not html:
-            print("❌ Failed to fetch page")
+        # Load search configurations
+        searches = self.load_search_urls()
+        
+        if not searches:
+            print("❌ No search URLs loaded. Please add URLs to search_urls.csv")
             return
         
-        rentals = self.parse_rentals(html)
+        print(f"✓ Loaded {len(searches)} search configurations\n")
         
-        if not rentals:
-            print("⚠️  No rentals found (page structure may have changed)")
-            return
+        # Track all rentals across all URLs
+        all_rentals = []
+        rentals_by_url = {}
         
-        print(f"✓ Found {len(rentals)} rental properties\n")
-        
-        # Display current listings
-        print("📋 CURRENT LISTINGS:")
-        for rental in rentals:
-            print(f"   • {rental['address']} ({rental['unit']})")
-            print(f"     ${rental['price']} | {rental['bedrooms']}bd/{rental['bathrooms']}ba | {rental['property_type']}")
+        # Process each search URL
+        for i, search in enumerate(searches, 1):
+            url_id = search['url_id']
+            url = search['url']
+            description = search['description']
+            
+            print(f"\n{'='*70}")
+            print(f"[{i}/{len(searches)}] Processing: {url_id}")
+            print(f"Description: {description}")
+            print(f"URL: {url[:80]}..." if len(url) > 80 else f"URL: {url}")
+            print("-" * 70)
+            
+            # Fetch all pages for this search
+            rentals = self.fetch_all_pages(url, url_id)
+            rentals_by_url[url_id] = rentals
+            all_rentals.extend(rentals)
+            
+            if not rentals:
+                print(f"   ⚠️  No rentals found for {url_id}")
+                continue
+            
+            print(f"\n   ✅ Total found: {len(rentals)} rental properties")
+            print(f"\n   📋 SUMMARY FOR {url_id}:")
+            
+            # Show summary stats
+            if rentals:
+                prices = [int(r['price']) for r in rentals]
+                print(f"      • Total listings: {len(rentals)}")
+                print(f"      • Price range: ${min(prices):,} - ${max(prices):,}")
+                print(f"      • Average price: ${sum(prices)//len(prices):,}")
         
         # Save data
-        print("\n💾 SAVING DATA:")
-        self.save_snapshot(rentals)
-        self.update_historical(rentals)
+        if all_rentals:
+            print(f"\n{'='*70}")
+            print("💾 SAVING DATA")
+            print("=" * 70)
+            self.save_snapshot(all_rentals)
+            self.update_historical(all_rentals)
+            
+            # Analyze changes
+            self.analyze_changes_by_url(rentals_by_url, searches)
+        else:
+            print("\n⚠️  No rentals found across all searches")
         
-        # Analyze changes
-        self.analyze_changes(rentals)
-        
-        print("\n" + "=" * 60)
-        print("✅ Tracking complete!")
-        print("=" * 60)
+        print("\n" + "=" * 70)
+        print("✅ TRACKING COMPLETE!")
+        print("=" * 70)
+        print(f"\nTotal properties tracked: {len(all_rentals)}")
+        print(f"Across {len(searches)} searches\n")
 
 
 def main():
-    # Your search URL
-    parser = argparse.ArgumentParser(description="Rental Tracker of SIC rentals")
-    parser.add_argument('-u', '--url', required=False, help='Search URL to scrape (https://callfreda.com/...)')
-    parser.add_argument('-p', '--path', required=False, help='file path to read URL from (overrides --url)')
-    args = parser.parse_args()
-    url = args.url
-    url_path = args.path
-    print(url_path)
-    if url_path:
-        print(f"Reading URL from file: {url_path}")
-        try:
-            with open(args.path, 'r', encoding='utf-8') as f:
-                lines = [line.strip() for line in f.readlines() if line.strip()]
-                if not lines:
-                    url = ''
-                elif len(lines) == 1:
-                    url = lines[0]
-                else:
-                    urls = lines
-                    print(f"Found {len(urls)} URLs in file. Running tracker for each.")
-                    for u in urls:
-                        print(f"\n---\nProcessing URL: {u}")
-                        tracker = RentalTracker(u)
-                        tracker.run()
-                        time.sleep(1)
-                    sys.exit(0)
-                print(f"URL read from file: {url}")
-            if not url:
-                print(f"Error: URL file '{args.path}' is empty")
-        except Exception as e:
-            print(f"Error reading URL file '{args.path}': {e}")
-            sys.exit(1)
-    else:
-        if not url:
-            print("Error: No URL provided. Use --url or --path to specify the search URL.")
-            sys.exit(1)
-        else:
-            print(f"Using URL from command line: {url}")
-    #url = "https://callfreda.com/rentalresults.php?vr=view&checkin=08/15/2026&checkout=08/22/2026&BD=5&MBD=7&BTH=3&MBTH=3&TW=Beach%20Block&MN=0&MX=999000&Amenities=Air%20Conditioning,Outside%20Shower,Washer,Dryer#"
-    #url = "https://callfreda.com/rentalresults.php?vr=view&checkin=08/22/2026&checkout=08/29/2026&BD=5&MBD=7&BTH=3&MBTH=3&TW=Beach%20Block&MN=0&MX=999000&Amenities=Air%20Conditioning,Outside%20Shower,Washer,Dryer"
-    print(f"Starting rental tracker with URL: {url}")
-    tracker = RentalTracker(url)
+    tracker = MultiRentalTracker()
     tracker.run()
 
 
